@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: go test ./...
+      - run: go vet ./...
+      - run: |
+          for target in windows/amd64 linux/amd64 darwin/amd64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./cmd/de_loader
+          done
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - name: Build archives
+        run: |
+          mkdir dist
+          for target in windows/amd64 linux/amd64 darwin/amd64 darwin/arm64; do
+            os=${target%/*}; arch=${target#*/}; ext=""
+            [ "$os" = windows ] && ext=.exe
+            GOOS=$os GOARCH=$arch go build -ldflags "-X main.version=${GITHUB_REF_NAME}" -o "dist/de_loader-$os-$arch$ext" ./cmd/de_loader
+            if [ "$os" = linux ]; then tar -C dist -czf "dist/de_loader-$os-$arch.tar.gz" "de_loader-$os-$arch$ext"; else (cd dist && zip "de_loader-$os-$arch.zip" "de_loader-$os-$arch$ext"); fi
+          done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
